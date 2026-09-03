@@ -1,0 +1,21 @@
+question,expected_source,expected_available
+What is the leave policy?,"Leave_Policy.pdf, page 1",yes
+How many days of Casual Leave are employees entitled to per year?,"Leave_Policy.pdf, page 1",yes
+What is the maternity leave duration?,"Leave_Policy.pdf, page 1",yes
+How does Earned Leave accrue and carry forward?,"Leave_Policy.pdf, page 2",yes
+How do I apply for leave?,"Leave_Policy.pdf, page 3",yes
+How many public holidays does the company observe each year?,"Leave_Policy.pdf, page 4",yes
+What are the standard working hours?,"Employee_Handbook.pdf, page 2",yes
+What employee benefits does the company provide?,"Employee_Handbook.pdf, page 3",yes
+What is the policy on using company laptops for personal use?,"Employee_Handbook.pdf, page 4",yes
+How can an employee raise a workplace grievance?,"Employee_Handbook.pdf, page 5",yes
+How is attendance tracked at the company?,"Attendance_Policy.pdf, page 1",yes
+How is attendance calculated?,"Attendance_Policy.pdf, page 2",yes
+What happens if an employee is late multiple times in a month?,"Attendance_Policy.pdf, page 3",yes
+What behavior is expected of employees toward colleagues and customers?,"Code_of_Conduct.pdf, page 1",yes
+How can an employee report workplace harassment?,"Code_of_Conduct.pdf, page 2",yes
+What must employees disclose regarding conflicts of interest?,"Code_of_Conduct.pdf, page 3",yes
+What is the disciplinary process for a code of conduct violation?,"Code_of_Conduct.pdf, page 5",yes
+Who is the company CEO?,Not available,no
+What is the company's current stock price?,Not available,no
+Does the company have a remote work / work-from-home policy?,Not available,no

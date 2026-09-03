@@ -1,0 +1,10 @@
+streamlit
+pypdf
+langchain-text-splitters
+fastembed
+faiss-cpu
+scikit-learn
+numpy
+google-genai
+python-dotenv
+reportlab
