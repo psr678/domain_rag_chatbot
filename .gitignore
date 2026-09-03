@@ -14,3 +14,4 @@ tests/evaluation_report.csv
 .claude/
 rptpv-*.png
 pv-*.png
+.copilot-specs-cache/

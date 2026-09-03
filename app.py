@@ -15,7 +15,6 @@ import uuid
 import pandas as pd
 import streamlit as st
 from dotenv import load_dotenv
-from streamlit.runtime.scriptrunner import add_script_run_ctx
 
 from rag_pipeline import RAGPipeline
 from prompt import REFUSAL_MESSAGE
@@ -47,6 +46,33 @@ with st.expander("ℹ️ Responsible AI notes -- please read", expanded=False):
         "local `feedback_log.csv` file (never sent anywhere) -- entirely optional."
     )
 
+class EvalState:
+    """
+    Plain mutable container for the background evaluation's live state.
+
+    IMPORTANT: the background thread mutates this object's attributes
+    directly (e.g. `state.progress = {...}`) -- it never calls
+    `st.session_state.x = y` itself. Writing to `st.session_state` from a
+    background thread ties that write to whichever script run was active
+    when the thread started; once the main thread reruns (which our
+    polling loop below does every couple of seconds to refresh the
+    progress bar), that old run is superseded and Streamlit raises
+    StopException on any further session_state writes from the thread,
+    silently killing it. A plain object has no such run-context binding --
+    only the *reference* to it lives in `st.session_state` (set once, from
+    the main thread, before the background thread starts), so the main
+    thread can safely read `st.session_state.eval_state.progress` etc. on
+    every rerun while the background thread keeps mutating the same
+    object in place.
+    """
+    def __init__(self):
+        self.running = False
+        self.progress = {"current": 0, "total": 0, "last_question": ""}
+        self.partial: list = []
+        self.results = None
+        self.error = None
+
+
 if "pipeline" not in st.session_state:
     st.session_state.pipeline = RAGPipeline()
 if "messages" not in st.session_state:
@@ -55,28 +81,23 @@ if "docs_processed" not in st.session_state:
     st.session_state.docs_processed = False
 if "processed_file_bytes" not in st.session_state:
     st.session_state.processed_file_bytes = []  # snapshot used to build an independent eval pipeline
-if "eval_running" not in st.session_state:
-    st.session_state.eval_running = False
 if "eval_confirm_pending" not in st.session_state:
     st.session_state.eval_confirm_pending = False
-if "eval_progress" not in st.session_state:
-    st.session_state.eval_progress = {"current": 0, "total": 0, "last_question": ""}
-if "eval_error" not in st.session_state:
-    st.session_state.eval_error = None
-if "eval_partial" not in st.session_state:
-    st.session_state.eval_partial = []
+if "eval_state" not in st.session_state:
+    st.session_state.eval_state = EvalState()
 
 pipeline: RAGPipeline = st.session_state.pipeline
 
 
-def _run_evaluation_background(files: list, google_api_key: str) -> None:
+def _run_evaluation_background(files: list, google_api_key: str, state: EvalState) -> None:
     """
-    Runs in a background thread (see add_script_run_ctx below) so the main
-    chat UI stays fully usable while it works through all 20 questions.
-    Uses its OWN RAGPipeline instance (built from a snapshot of the
-    processed document bytes) rather than the shared `pipeline` object, so
-    it never fights the main thread over conversation state if the user
-    keeps chatting while the evaluation runs.
+    Runs in a background thread so the main chat UI stays fully usable
+    while it works through all 20 questions. Uses its OWN RAGPipeline
+    instance (built from a snapshot of the processed document bytes)
+    rather than the shared `pipeline` object, so it never fights the main
+    thread over conversation state if the user keeps chatting while the
+    evaluation runs. Only touches `state` (see EvalState) and print() --
+    never `st.*` -- so it's unaffected by the main script rerunning.
     """
     print("[evaluate_qa] Starting background evaluation...", flush=True)
     try:
@@ -86,26 +107,23 @@ def _run_evaluation_background(files: list, google_api_key: str) -> None:
               f"Embedding backend: {eval_pipeline.embedding_backend}", flush=True)
 
         def on_progress(i, total, result):
-            st.session_state.eval_progress = {
-                "current": i, "total": total, "last_question": result["question"],
-            }
-            st.session_state.eval_partial.append(result)
+            state.progress = {"current": i, "total": total, "last_question": result["question"]}
+            state.partial.append(result)
             print(f"[evaluate_qa] [{i}/{total}] {result['correct']}  "
                   f"({result['latency_seconds']}s)  {result['question']}", flush=True)
 
         results = run_evaluation(eval_pipeline, progress_callback=on_progress)
         write_report(results)
-        st.session_state.eval_results = results
-        st.session_state.eval_error = None
+        state.results = results
+        state.error = None
         n_pass = sum(1 for r in results if r["correct"] == "PASS")
         print(f"[evaluate_qa] Done: {n_pass}/{len(results)} passed. Report written to {REPORT_PATH}", flush=True)
     except Exception as exc:
-        st.session_state.eval_results = st.session_state.eval_partial or None
-        st.session_state.eval_error = str(exc)
-        print(f"[evaluate_qa] Stopped early after {len(st.session_state.eval_partial)} question(s): {exc}",
-              flush=True)
+        state.results = state.partial or None
+        state.error = str(exc)
+        print(f"[evaluate_qa] Stopped early after {len(state.partial)} question(s): {exc}", flush=True)
     finally:
-        st.session_state.eval_running = False
+        state.running = False
 
 
 # ---------------------------------------------------------------------------
@@ -169,8 +187,10 @@ with st.sidebar:
                "(retrieval + Gemini generation) and scores the results. Runs in the background "
                "-- you can keep using the chat while it works.")
 
-    if st.session_state.eval_running:
-        prog = st.session_state.eval_progress
+    eval_state: EvalState = st.session_state.eval_state
+
+    if eval_state.running:
+        prog = eval_state.progress
         if prog["total"]:
             st.progress(prog["current"] / prog["total"],
                         text=f"[{prog['current']}/{prog['total']}] {prog['last_question']}")
@@ -191,16 +211,15 @@ with st.sidebar:
             if not os.environ.get("GOOGLE_API_KEY"):
                 st.error("No GOOGLE_API_KEY found -- add one to `.env` first (see `.env.example`).")
             else:
-                st.session_state.eval_running = True
                 st.session_state.eval_confirm_pending = False
-                st.session_state.eval_progress = {"current": 0, "total": 0, "last_question": ""}
-                st.session_state.eval_partial = []
+                new_state = EvalState()
+                new_state.running = True
+                st.session_state.eval_state = new_state
                 thread = threading.Thread(
                     target=_run_evaluation_background,
-                    args=(st.session_state.processed_file_bytes, os.environ.get("GOOGLE_API_KEY")),
+                    args=(st.session_state.processed_file_bytes, os.environ.get("GOOGLE_API_KEY"), new_state),
                     daemon=True,
                 )
-                add_script_run_ctx(thread)  # lets the background thread safely touch st.session_state
                 thread.start()
                 st.rerun()
         if col_no.button("Cancel", use_container_width=True):
@@ -224,16 +243,18 @@ if not st.session_state.docs_processed:
             "**Process Documents** to get started.")
     st.stop()
 
-if st.session_state.eval_running:
+eval_state: EvalState = st.session_state.eval_state
+
+if eval_state.running:
     st.info("\U0001F4CA An evaluation is running in the background (see the sidebar for progress) -- "
             "the chat below still works normally while it finishes.", icon="⏳")
 
-if st.session_state.eval_error and not st.session_state.eval_running:
-    st.error(f"The last evaluation stopped early: {st.session_state.eval_error}")
+if eval_state.error and not eval_state.running:
+    st.error(f"The last evaluation stopped early: {eval_state.error}")
 
-if st.session_state.get("eval_results") and not st.session_state.eval_running:
+if eval_state.results and not eval_state.running:
     with st.expander("\U0001F4CA Latest Evaluation Results", expanded=True):
-        results = st.session_state.eval_results
+        results = eval_state.results
         n_pass = sum(1 for r in results if r["correct"] == "PASS")
         col1, col2 = st.columns(2)
         col1.metric("Passed", f"{n_pass} / {len(results)}")
@@ -286,11 +307,11 @@ if question:
     st.session_state.messages.append(new_msg)
     render_message(new_msg)
 
-if st.session_state.eval_running:
+if eval_state.running:
     # Lightweight polling refresh so the sidebar progress bar keeps moving
     # even if the user isn't otherwise interacting with the page. The
-    # evaluation itself runs independently in its own thread, so this
-    # rerun never interrupts it -- unlike the earlier (fixed) approach
-    # where the evaluation ran inline in the main script thread.
+    # evaluation itself runs independently in its own thread and only
+    # touches `eval_state` (a plain object), never `st.session_state`
+    # directly -- so this rerun (or any other) can never interrupt it.
     time.sleep(2)
     st.rerun()
