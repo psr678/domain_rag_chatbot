@@ -16,6 +16,7 @@ styles.add(ParagraphStyle(name='CellBody', parent=styles['Normal'], fontSize=8.4
 styles.add(ParagraphStyle(name='CellBodyCenter', parent=styles['Normal'], fontSize=8.4, leading=10.5, alignment=1))
 styles.add(ParagraphStyle(name='HighlightHead', parent=styles['Normal'], fontSize=11, leading=14, textColor=colors.HexColor('#1a3d5c'), fontName='Helvetica-Bold', spaceAfter=4))
 styles.add(ParagraphStyle(name='HighlightBody', parent=styles['Normal'], fontSize=9.2, leading=12.8, spaceAfter=5))
+styles.add(ParagraphStyle(name='CellLink', parent=styles['Normal'], fontSize=8.4, leading=10.5, textColor=colors.HexColor('#1a56db')))
 
 def cell(text, style=None):
     return Paragraph(text, style or styles['CellBody'])
@@ -37,6 +38,50 @@ info_table.setStyle(TableStyle([
 ]))
 story.append(info_table)
 story.append(Spacer(1, 4))
+
+REPO = "https://github.com/psr678/domain_rag_chatbot"
+
+def link_cell(text, url, style=None):
+    return Paragraph(f'<link href="{url}"><u>{text}</u></link>', style or styles['CellLink'])
+
+story.append(Paragraph("Submission Deliverables &amp; GitHub Repository Links", styles['H2s']))
+story.append(Paragraph(
+    f'All source code, documents, and supporting files referenced below are in the public GitHub '
+    f'repository: <link href="{REPO}"><u>{REPO}</u></link>. This report is self-contained -- every '
+    f'deliverable required by the assignment brief is listed here with a direct link to its exact '
+    f'location, so this PDF alone is sufficient for submission and review.', styles['Bodys']))
+
+deliverables = [
+    ["1", "Working Streamlit application", link_cell("app.py", f"{REPO}/blob/main/app.py")],
+    ["2", "Complete source code", link_cell("repository root (all .py modules)", f"{REPO}")],
+    ["3", "Sample PDF documents", link_cell("documents/ (4 fictional HR policy PDFs)", f"{REPO}/tree/main/documents")],
+    ["4", "requirements.txt", link_cell("requirements.txt", f"{REPO}/blob/main/requirements.txt")],
+    ["5", "README (setup &amp; usage instructions)", link_cell("README.md", f"{REPO}/blob/main/README.md")],
+    ["6", "Architecture / workflow diagram", link_cell("architecture_diagram.png", f"{REPO}/blob/main/architecture_diagram.png")],
+    ["7", "Testing sheet (20 questions, min. 15 required)", link_cell("tests/test_questions.csv", f"{REPO}/tree/main/tests")],
+    ["8", "GitHub repository", link_cell(REPO.replace("https://", ""), REPO)],
+    ["9", "Project report &amp; demonstration video", Paragraph(
+        'This PDF report (self-contained). Demonstration video: '
+        f'<link href="{REPO}/blob/main/demo_video.mp4"><u>demo_video.mp4</u></link>', styles['CellBody'])],
+]
+deliv_rows = [[cell("#", styles['CellHead']), cell("Deliverable", styles['CellHead']), cell("Location / Link", styles['CellHead'])]]
+for num, name, loc in deliverables:
+    loc_cell = loc if isinstance(loc, Paragraph) else cell(loc)
+    deliv_rows.append([cell(num, styles['CellBodyCenter']), cell(name), loc_cell])
+
+dt = Table(deliv_rows, colWidths=[0.3*inch, 2.35*inch, 3.05*inch])
+dt.setStyle(TableStyle([
+    ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#1a3d5c')),
+    ('GRID', (0,0), (-1,-1), 0.4, colors.HexColor('#cccccc')),
+    ('ROWBACKGROUNDS', (0,1), (-1,-1), [colors.white, colors.HexColor('#f2f6f9')]),
+    ('VALIGN', (0,0), (-1,-1), 'TOP'),
+    ('TOPPADDING', (0,0), (-1,-1), 4),
+    ('BOTTOMPADDING', (0,0), (-1,-1), 4),
+]))
+story.append(dt)
+story.append(Spacer(1, 8))
+
+story.append(PageBreak())
 
 story.append(Paragraph("1. Project Objective", styles['H2s']))
 story.append(Paragraph(

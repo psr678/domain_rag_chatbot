@@ -163,8 +163,12 @@ For a full live evaluation (retrieval **and** Gemini answer generation,
 not just retrieval), either:
 
 - Click **\U0001F4CA Run Evaluation (20 questions)** in the app's sidebar
-  (after processing documents) -- results show inline as a table with a
-  pass/fail count, accuracy, and a CSV download button, or
+  (after processing documents), confirm the "this may take a while"
+  prompt, and it runs in a background thread with its own independent
+  copy of the pipeline -- the chat stays fully usable while it works, and
+  a progress bar in the sidebar tracks it. Results appear as a table with
+  a pass/fail count, accuracy, and a CSV download button once it
+  finishes. Or
 - Run it from the command line:
   ```
   python evaluate_qa.py
@@ -226,6 +230,11 @@ brief:
   each turn still runs on the latest question text only (not a rewritten
   query informed by the conversation), and history isn't trimmed for
   very long sessions.
+- **The background evaluation uses a single worker thread** -- starting
+  a second evaluation while one is running isn't supported (the button is
+  hidden until the current run finishes), and progress is shared through
+  `st.session_state`, a simplification that works well for a single-user
+  local/Streamlit-Cloud deployment but isn't a general-purpose job queue.
 
 ## Optional Advanced Features Implemented
 
