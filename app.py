@@ -8,19 +8,24 @@ page number.
 """
 import os
 import glob
+import uuid
 
+import pandas as pd
 import streamlit as st
 from dotenv import load_dotenv
 
 from rag_pipeline import RAGPipeline
 from prompt import REFUSAL_MESSAGE
+from feedback import log_feedback
+from evaluate_qa import run_evaluation, write_report, QUESTIONS_PATH, REPORT_PATH
 
 load_dotenv()
 
 st.set_page_config(page_title="Domain-Specific RAG Chatbot", page_icon="\U0001F4C4", layout="wide")
 
 st.title("\U0001F4C4 Domain-Specific RAG Chatbot")
-st.caption("Ask questions about your uploaded PDF documents. Answers are grounded only in what you upload.")
+st.caption("Ask questions about your uploaded PDF documents. Answers are grounded only in what you upload -- "
+           "follow-up questions in the same session are understood in context.")
 
 with st.expander("ℹ️ Responsible AI notes -- please read", expanded=False):
     st.markdown(
@@ -32,7 +37,11 @@ with st.expander("ℹ️ Responsible AI notes -- please read", expanded=False):
         "- Do not upload confidential or sensitive documents you don't have permission to share.\n"
         "- Any instructions found *inside* an uploaded document are treated as plain text, not as "
         "commands to the assistant.\n"
-        "- Uploaded files are processed in memory for this session only."
+        "- Uploaded files are processed in memory for this session only.\n"
+        "- Follow-up questions are understood using this session's chat history; click **Clear Chat** "
+        "or process new documents to start a fresh conversation.\n"
+        "- Clicking a 👍/👎 button below an answer logs that question, answer, and your rating to a "
+        "local `feedback_log.csv` file (never sent anywhere) -- entirely optional."
     )
 
 if "pipeline" not in st.session_state:
@@ -95,7 +104,35 @@ with st.sidebar:
     st.divider()
     if st.button("\U0001F5D1️ Clear Chat"):
         st.session_state.messages = []
+        pipeline.reset_conversation()
         st.rerun()
+
+    st.divider()
+    st.header("2. Evaluate (optional)")
+    st.caption(f"Runs all 20 questions in `{QUESTIONS_PATH}` through the live pipeline "
+               "(retrieval + Gemini generation) and scores the results.")
+    run_eval_clicked = st.button(
+        "\U0001F4CA Run Evaluation (20 questions)",
+        disabled=not st.session_state.docs_processed,
+    )
+
+    if run_eval_clicked:
+        if not os.environ.get("GOOGLE_API_KEY"):
+            st.error("No GOOGLE_API_KEY found -- add one to `.env` first (see `.env.example`).")
+        else:
+            progress_bar = st.progress(0.0, text="Starting evaluation...")
+
+            def update_progress(i, total, result):
+                progress_bar.progress(i / total, text=f"[{i}/{total}] {result['correct']} -- {result['question']}")
+
+            with st.spinner("Running live evaluation -- this calls Gemini once per question..."):
+                results = run_evaluation(pipeline, progress_callback=update_progress)
+                write_report(results)
+            progress_bar.empty()
+            st.session_state.eval_results = results
+            n_pass = sum(1 for r in results if r["correct"] == "PASS")
+            st.success(f"Evaluation complete: {n_pass}/{len(results)} passed. "
+                       f"Report saved to `{REPORT_PATH}`.")
 
     st.divider()
     if not os.environ.get("GOOGLE_API_KEY"):
@@ -110,7 +147,20 @@ if not st.session_state.docs_processed:
             "**Process Documents** to get started.")
     st.stop()
 
-for msg in st.session_state.messages:
+if st.session_state.get("eval_results"):
+    with st.expander("\U0001F4CA Latest Evaluation Results", expanded=True):
+        results = st.session_state.eval_results
+        n_pass = sum(1 for r in results if r["correct"] == "PASS")
+        col1, col2 = st.columns(2)
+        col1.metric("Passed", f"{n_pass} / {len(results)}")
+        col2.metric("Accuracy", f"{n_pass / len(results):.0%}")
+        st.dataframe(pd.DataFrame(results), use_container_width=True, hide_index=True)
+        with open(REPORT_PATH, "rb") as f:
+            st.download_button("Download evaluation_report.csv", f, file_name="evaluation_report.csv")
+
+def render_message(msg: dict) -> None:
+    """Renders one message bubble. Assistant messages (that aren't errors) get a
+    Sources expander and a 👍/👎 feedback widget."""
     with st.chat_message(msg["role"]):
         st.markdown(msg["content"])
         if msg.get("sources"):
@@ -118,26 +168,35 @@ for msg in st.session_state.messages:
                 for s in msg["sources"]:
                     st.markdown(f"- **{s.doc_name}**, page {s.page_number} (relevance {s.score:.2f})")
 
+        if msg["role"] == "assistant" and not msg.get("is_error"):
+            fb_key = f"fb_{msg['id']}"
+            selected = st.feedback("thumbs", key=fb_key)
+            if selected is not None and msg.get("feedback_logged") != selected:
+                label = "useful" if selected == 1 else "incorrect"
+                log_feedback(msg.get("question", ""), msg["content"], msg.get("sources"), label)
+                msg["feedback_logged"] = selected
+
+
+for msg in st.session_state.messages:
+    render_message(msg)
+
 question = st.chat_input("Ask a question about your documents...")
 if question:
     st.session_state.messages.append({"role": "user", "content": question, "sources": None})
     with st.chat_message("user"):
         st.markdown(question)
 
-    with st.chat_message("assistant"):
-        with st.spinner("Retrieving relevant passages and generating an answer..."):
-            try:
-                answer = pipeline.ask(question)
-                st.markdown(answer.text)
-                if answer.sources:
-                    with st.expander("\U0001F4CE Sources"):
-                        for s in answer.sources:
-                            st.markdown(f"- **{s.doc_name}**, page {s.page_number} (relevance {s.score:.2f})")
-                st.session_state.messages.append(
-                    {"role": "assistant", "content": answer.text, "sources": answer.sources}
-                )
-            except RuntimeError as exc:
-                st.error(str(exc))
-                st.session_state.messages.append(
-                    {"role": "assistant", "content": f"Error: {exc}", "sources": None}
-                )
+    with st.spinner("Retrieving relevant passages and generating an answer..."):
+        try:
+            answer = pipeline.ask(question)
+            new_msg = {
+                "role": "assistant", "content": answer.text, "sources": answer.sources,
+                "question": question, "id": uuid.uuid4().hex, "feedback_logged": None,
+            }
+        except RuntimeError as exc:
+            new_msg = {
+                "role": "assistant", "content": f"Error: {exc}", "sources": None,
+                "question": question, "id": uuid.uuid4().hex, "is_error": True,
+            }
+    st.session_state.messages.append(new_msg)
+    render_message(new_msg)

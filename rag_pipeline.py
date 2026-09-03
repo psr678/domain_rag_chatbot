@@ -19,6 +19,14 @@ Each candidate is retried with exponential backoff on transient 503
 since those errors are about temporary server load, not a bad model
 choice. Override the model list with the GEMINI_MODEL env var (comma
 -separated) if you want to pin a specific model.
+
+Conversation memory (optional advanced feature): questions are sent
+through a `google.genai` Chat session rather than a stateless
+`generate_content` call, so Gemini can see prior turns in the same
+session and resolve follow-up questions like "what about maternity
+leave?" after an earlier leave-policy question. Retrieval for each turn
+still runs on the latest question only (a beginner-level simplification
+-- see README "Limitations"). Call `reset_conversation()` to start fresh.
 """
 import os
 import time
@@ -56,7 +64,14 @@ class RAGPipeline:
         self.store = VectorStore()
         self.google_api_key = google_api_key or os.environ.get("GOOGLE_API_KEY")
         self._client = None
+        self._chat = None
+        self._chat_model = None
         self.processed_files: list[str] = []
+
+    def reset_conversation(self) -> None:
+        """Clears conversation memory. Call this alongside clearing the UI chat history."""
+        self._chat = None
+        self._chat_model = None
 
     # ---- Document ingestion -------------------------------------------------
     def process_documents(self, files: list[tuple[str, bytes]]) -> int:
@@ -64,6 +79,7 @@ class RAGPipeline:
         page_records = extract_multiple(files)
         self.store.build(page_records)
         self.processed_files = [f[0] for f in files]
+        self.reset_conversation()  # new documents -> old chat history no longer applies
         return len(self.store.chunks)
 
     @property
@@ -86,39 +102,54 @@ class RAGPipeline:
             self._client = genai.Client(api_key=self.google_api_key)
         return self._client
 
+    def _get_chat(self, client, model: str):
+        """Returns the active Chat session for `model`, creating one if needed.
+        Reusing the same Chat object across turns is what gives the assistant
+        conversation memory -- Gemini sees every prior user/model turn sent
+        through it."""
+        if self._chat is None or self._chat_model != model:
+            from google.genai import types
+            config = types.GenerateContentConfig(
+                system_instruction=SYSTEM_PROMPT,
+                temperature=0.1,
+                max_output_tokens=500,
+                # This project never passes tools/functions to Gemini, so automatic
+                # function calling (AFC) is irrelevant here -- disabling it explicitly
+                # silences the SDK's generic "use AFC in Chat.send_message instead" notice.
+                automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
+            )
+            self._chat = client.chats.create(model=model, config=config)
+            self._chat_model = model
+        return self._chat
+
     def _call_gemini_with_retry_and_fallback(self, client, user_prompt: str):
         """
-        Tries each model in GEMINI_MODEL_CANDIDATES in order. For each model,
-        retries up to MAX_RETRIES_PER_MODEL times with exponential backoff on
+        Tries each model in GEMINI_MODEL_CANDIDATES in order, sending the
+        message through a persistent Chat session (see _get_chat) so
+        conversation history carries across turns. For each model, retries
+        up to MAX_RETRIES_PER_MODEL times with exponential backoff on
         transient 503 "UNAVAILABLE / high demand" errors before moving on to
         the next model. A 404 "model not found" error skips straight to the
-        next candidate (retrying won't fix a wrong model name).
+        next candidate (retrying won't fix a wrong model name). Falling back
+        to a different model starts a fresh chat (conversation memory does
+        not carry across a model switch).
         """
-        from google.genai import types
-
-        config = types.GenerateContentConfig(
-            system_instruction=SYSTEM_PROMPT,
-            temperature=0.1,
-            max_output_tokens=500,
-            # This project never passes tools/functions to Gemini, so automatic
-            # function calling (AFC) is irrelevant here -- disabling it explicitly
-            # silences the SDK's generic "use AFC in Chat.send_message instead" notice.
-            automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
-        )
-
         last_exc = None
         for model in GEMINI_MODEL_CANDIDATES:
             for attempt in range(1, MAX_RETRIES_PER_MODEL + 1):
                 try:
-                    return client.models.generate_content(model=model, contents=user_prompt, config=config)
+                    chat = self._get_chat(client, model)
+                    return chat.send_message(user_prompt)
                 except Exception as exc:
                     last_exc = exc
                     msg = str(exc)
                     if "NOT_FOUND" in msg or "404" in msg:
+                        self.reset_conversation()
                         break  # this model doesn't exist for this key -- try the next one, don't retry
                     if ("UNAVAILABLE" in msg or "503" in msg) and attempt < MAX_RETRIES_PER_MODEL:
                         time.sleep(RETRY_BASE_DELAY_SECONDS * (2 ** (attempt - 1)))  # 2s, 4s, ...
                         continue
+                    self.reset_conversation()
                     break  # non-retryable error, or retries exhausted for this model -- try next model
 
         raise RuntimeError(

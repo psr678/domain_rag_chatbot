@@ -5,6 +5,7 @@ fastembed
 faiss-cpu
 scikit-learn
 numpy
+pandas
 google-genai
 python-dotenv
 reportlab

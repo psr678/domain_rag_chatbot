@@ -14,6 +14,8 @@ styles.add(ParagraphStyle(name='Caption', parent=styles['Normal'], fontSize=8.5,
 styles.add(ParagraphStyle(name='CellHead', parent=styles['Normal'], fontSize=8.6, leading=10.5, textColor=colors.white, fontName='Helvetica-Bold'))
 styles.add(ParagraphStyle(name='CellBody', parent=styles['Normal'], fontSize=8.4, leading=10.5))
 styles.add(ParagraphStyle(name='CellBodyCenter', parent=styles['Normal'], fontSize=8.4, leading=10.5, alignment=1))
+styles.add(ParagraphStyle(name='HighlightHead', parent=styles['Normal'], fontSize=11, leading=14, textColor=colors.HexColor('#1a3d5c'), fontName='Helvetica-Bold', spaceAfter=4))
+styles.add(ParagraphStyle(name='HighlightBody', parent=styles['Normal'], fontSize=9.2, leading=12.8, spaceAfter=5))
 
 def cell(text, style=None):
     return Paragraph(text, style or styles['CellBody'])
@@ -121,24 +123,72 @@ rules = [
 ]
 story.append(ListFlowable([ListItem(Paragraph(r, styles['Bodys']), bulletColor=colors.HexColor('#2c5a7c')) for r in rules], bulletType='bullet', leftIndent=14))
 
-story.append(Paragraph("8. Limitations & Future Improvements", styles['H2s']))
+story.append(Paragraph("8. Optional Advanced Features Implemented", styles['H2s']))
+story.append(Paragraph(
+    "The assignment brief lists several optional advanced upgrades beyond the minimum requirement. "
+    "<b>Four of these were implemented</b> in this submission:", styles['Bodys']))
+
+adv_features = [
+    ("&#10003; Conversation Memory for Follow-Up Questions", "rag_pipeline.py",
+     "Questions are sent through a google.genai Chat session instead of a stateless call, so Gemini "
+     "can resolve follow-ups (e.g. \"what about maternity leave?\") using earlier turns in the same "
+     "session. Reset via the sidebar's Clear Chat button or by processing new documents."),
+    ("&#10003; Feedback Buttons", "feedback.py",
+     "A thumbs up / down widget under every answer logs the question, answer, sources, and rating to "
+     "a local feedback_log.csv for review -- fully opt-in and offline."),
+    ("&#10003; Docker Deployment", "Dockerfile, docker-compose.yml",
+     "Containerizes the Streamlit app for one-command build and run (docker compose up --build)."),
+    ("&#10003; Evaluation Using a Prepared Question-Answer Dataset", "evaluate_qa.py",
+     "Runs the complete live pipeline (retrieval + Gemini generation) against all 20 questions in "
+     "tests/test_questions.csv and writes a scored tests/evaluation_report.csv, going beyond "
+     "run_pipeline_test.py's offline-only retrieval check. Runnable from the command line or via a "
+     "Run Evaluation button in the app's sidebar, which shows pass/fail, accuracy, and a results "
+     "table with a CSV download."),
+]
+
+adv_flat_rows = []
+for title, filename, desc in adv_features:
+    combined = Paragraph(
+        f'{title} &mdash; <font name="Helvetica-Oblique">{filename}</font><br/>'
+        f'<font size="9.2">{desc}</font>', styles['HighlightBody'])
+    adv_flat_rows.append([combined])
+
+adv_box = Table(adv_flat_rows, colWidths=[6.7*inch])
+adv_box.setStyle(TableStyle([
+    ('BACKGROUND', (0,0), (-1,-1), colors.HexColor('#eef7ee')),
+    ('BOX', (0,0), (-1,-1), 1.0, colors.HexColor('#2e7d32')),
+    ('LINEBELOW', (0,0), (-1,-2), 0.6, colors.HexColor('#bfe0bf')),
+    ('LEFTPADDING', (0,0), (-1,-1), 10),
+    ('RIGHTPADDING', (0,0), (-1,-1), 10),
+    ('TOPPADDING', (0,0), (-1,-1), 7),
+    ('BOTTOMPADDING', (0,0), (-1,-1), 7),
+]))
+story.append(adv_box)
+story.append(Spacer(1, 4))
+story.append(Paragraph(
+    "These were implemented in addition to the required minimum feature set to demonstrate extra "
+    "depth; none are needed to satisfy the core assignment.", styles['Caption']))
+
+story.append(Paragraph("9. Limitations & Future Improvements", styles['H2s']))
 story.append(Paragraph(
     "Retrieval quality depends on the embedding backend in use -- the offline TF-IDF fallback "
     "(only triggered when the pretrained model can't be downloaded) is keyword-based and less robust "
     "to paraphrasing than the real MiniLM embeddings. No OCR is implemented, so scanned/image-only "
-    "PDFs raise a clear error rather than returning empty text. A RAG chatbot can still be wrong even "
-    "when grounded, if retrieval misses the most relevant passage. Future improvements: OCR support, "
-    "conversation memory for follow-up questions, multiple document collections, and a FastAPI backend "
-    "(see project brief's Optional Advanced Features).", styles['Bodys']))
+    "PDFs raise a clear error rather than returning empty text. Conversation memory carries the full "
+    "chat history to Gemini but does not rewrite the retrieval query using that history, and isn't "
+    "trimmed for very long sessions. A RAG chatbot can still be wrong even when grounded, if retrieval "
+    "misses the most relevant passage. Further improvements: OCR support, multiple document "
+    "collections, and a FastAPI backend (see project brief's Optional Advanced Features).", styles['Bodys']))
 
-story.append(Paragraph("9. Conclusion", styles['H2s']))
+story.append(Paragraph("10. Conclusion", styles['H2s']))
 story.append(Paragraph(
     "This project delivers a complete, working RAG pipeline covering every required module: PDF "
     "upload, text extraction with page metadata, chunking, pretrained-model embeddings, FAISS vector "
     "search, a relevance-threshold refusal guardrail, grounded answer generation via Google Gemini, and an "
-    "interactive Streamlit chat interface with source citations. All 20 offline-testable cases passed, "
-    "and the codebase follows the Responsible AI and Security rules specified in the project brief "
-    "throughout.", styles['Bodys']))
+    "interactive Streamlit chat interface with source citations. Four optional advanced features were "
+    "added on top: conversation memory, feedback buttons, Docker deployment, and a live evaluation "
+    "harness. All 20 offline-testable cases passed, and the codebase follows the Responsible AI and "
+    "Security rules specified in the project brief throughout.", styles['Bodys']))
 
 doc = SimpleDocTemplate(
     "Raju_P_S_RAG_Chatbot_Project_Report.pdf",

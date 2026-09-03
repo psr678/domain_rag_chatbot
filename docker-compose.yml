@@ -1,0 +1,14 @@
+# Usage:  docker compose up --build
+#   Dashboard: http://localhost:8501
+#
+# Reads GOOGLE_API_KEY from your local .env file (create it from .env.example).
+
+services:
+  rag-chatbot:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8501:8501"
+    env_file:
+      - .env
